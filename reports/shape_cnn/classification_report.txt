@@ -1,0 +1,8 @@
+              precision    recall  f1-score   support
+
+      circle     1.0000    1.0000    1.0000       450
+   rectangle     1.0000    1.0000    1.0000       450
+
+    accuracy                         1.0000       900
+   macro avg     1.0000    1.0000    1.0000       900
+weighted avg     1.0000    1.0000    1.0000       900

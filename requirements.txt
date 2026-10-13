@@ -1,0 +1,6 @@
+tensorflow>=2.16,<3
+numpy
+Pillow
+matplotlib
+scikit-learn
+streamlit>=1.32,<2
