@@ -42,11 +42,17 @@ def train_and_evaluate(
         epochs=15,
         batch_size=64,
         callbacks=[
+            keras.callbacks.ReduceLROnPlateau(
+                monitor="val_loss",
+                factor=0.5,
+                patience=1,
+                min_lr=1e-5,
+            ),
             keras.callbacks.EarlyStopping(
                 monitor="val_loss",
                 patience=3,
                 restore_best_weights=True,
-            )
+            ),
         ],
         verbose=2,
     )

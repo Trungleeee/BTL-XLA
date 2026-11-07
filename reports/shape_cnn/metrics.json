@@ -1,5 +1,5 @@
 {
-  "test_loss": 1.0212253442887231e-07,
+  "test_loss": 1.4003875548951328e-05,
   "test_accuracy": 1.0,
   "class_names": [
     "circle",

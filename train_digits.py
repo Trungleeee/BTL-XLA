@@ -30,6 +30,7 @@ def main():
     model = build_cnn(
         input_shape=(28, 28, 1),
         num_classes=10,
+        augment=True,
     )
 
     train_and_evaluate(

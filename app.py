@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -5,7 +6,12 @@ import streamlit as st
 from PIL import ImageDraw
 from tensorflow import keras
 
-from image_utils import load_rgb, prepare_digit, extract_shapes
+from image_utils import (
+    extract_shapes,
+    load_rgb,
+    otsu_threshold,
+    prepare_digit,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -68,7 +74,10 @@ def show_features(model, sample):
 
 def digit_page():
     st.header("Nhận dạng chữ số viết tay")
-    st.caption("Mỗi ảnh chứa một chữ số 0–9, nền sạch.")
+    st.caption(
+        "Mỗi ảnh chứa một chữ số 0–9. Hệ thống tự động khử nền, "
+        "phân ngưỡng Otsu và căn chỉnh theo trọng tâm khối lượng (Center of Mass)."
+    )
 
     model = get_model("digit_cnn.keras")
 
@@ -85,6 +94,7 @@ def digit_page():
         image = load_rgb(uploaded)
         image.thumbnail((800, 800))
         gray, normalized = prepare_digit(image)
+        threshold = otsu_threshold(gray)
     except Exception as error:
         st.error(f"Không xử lý được ảnh: {error}")
         return
@@ -92,10 +102,13 @@ def digit_page():
     columns = st.columns(3)
 
     columns[0].image(image, caption="Ảnh gốc")
-    columns[1].image(gray, caption="Nét sáng trên nền tối")
+    columns[1].image(
+        gray,
+        caption=f"Khử nền & Tăng tương phản (Ngưỡng Otsu = {threshold})",
+    )
     columns[2].image(
         normalized[:, :, 0],
-        caption="Ảnh 28×28 đưa vào CNN",
+        caption="Ảnh 28×28 căn tâm khối lượng đưa vào CNN",
         clamp=True,
         width=200,
     )
@@ -121,7 +134,7 @@ def digit_page():
 def shape_page():
     st.header("Phát hiện hình tròn và hình chữ nhật")
     st.caption(
-        "Dùng ảnh nền đơn giản, hình tách rời và tương phản rõ. "
+        "Phân đoạn tự động bằng ngưỡng Otsu + BFS 8 lân cận. "
         "Có thể thử samples/multiple_shapes.png."
     )
 
@@ -133,11 +146,21 @@ def shape_page():
         key="shape_upload",
     )
 
-    min_area = st.slider(
+    col_area, col_conf = st.columns(2)
+
+    min_area = col_area.slider(
         "Số pixel tối thiểu của một vùng",
         min_value=5,
         max_value=300,
         value=30,
+    )
+
+    min_confidence = col_conf.slider(
+        "Ngưỡng độ tin cậy tối thiểu",
+        min_value=0.50,
+        max_value=0.99,
+        value=0.75,
+        step=0.05,
     )
 
     if uploaded is None:
@@ -161,7 +184,7 @@ def shape_page():
     left.image(image, caption="Ảnh đầu vào")
     right.image(
         mask.astype(np.uint8) * 255,
-        caption="Ảnh nhị phân",
+        caption="Ảnh nhị phân (Phân ngưỡng tự động Otsu)",
     )
 
     if not objects:
@@ -176,47 +199,57 @@ def shape_page():
 
     names = ["Tròn", "Chữ nhật"]
     ascii_names = ["Circle", "Rectangle"]
-    counts = [0, 0]
+    colors = ["#00a651", "#e63946"]
+    counts = [0, 0, 0]
     rows = []
 
     for index, (obj, scores) in enumerate(
         zip(objects, probabilities), start=1
     ):
         label = int(np.argmax(scores))
-        counts[label] += 1
-
+        confidence = float(scores[label])
         x0, y0, x1, y1 = obj["bbox"]
+
+        if confidence >= min_confidence:
+            counts[label] += 1
+            pred_name = names[label]
+            tag = f"{index}: {ascii_names[label]} ({confidence:.0%})"
+            box_color = colors[label]
+        else:
+            counts[2] += 1
+            pred_name = "Chưa rõ / Nhiễu"
+            tag = f"{index}: Uncertain ({confidence:.0%})"
+            box_color = "#f4a261"
 
         draw.rectangle(
             (x0, y0, x1 - 1, y1 - 1),
-            outline="red",
+            outline=box_color,
             width=3,
         )
 
         draw.text(
             (x0, max(0, y0 - 14)),
-            f"{index}: {ascii_names[label]}",
-            fill="red",
+            tag,
+            fill=box_color,
         )
 
         rows.append({
             "Vùng": index,
-            "Dự đoán": names[label],
-            "Điểm": round(float(scores[label]), 4),
+            "Dự đoán": pred_name,
+            "Điểm tin cậy": round(confidence, 4),
+            "Diện tích (px)": obj.get("area", 0),
+            "Tỷ lệ W/H": obj.get("aspect_ratio", 1.0),
+            "Độ đặc (Extent)": obj.get("extent", 0.0),
             "Khung bao": str(obj["bbox"]),
         })
 
-    st.image(result, caption="Kết quả phát hiện")
+    st.image(result, caption="Kết quả phát hiện (Xanh lá: Tròn, Đỏ: Chữ nhật, Cam: Chưa rõ)")
     st.write(
-        f"Hình tròn: {counts[0]} — "
-        f"Hình chữ nhật: {counts[1]}"
+        f"**Hình tròn**: {counts[0]} — "
+        f"**Hình chữ nhật**: {counts[1]} — "
+        f"**Chưa rõ / Dưới ngưỡng**: {counts[2]}"
     )
-    st.dataframe(rows)
-
-    st.caption(
-        "Mô hình hiện chỉ có hai lớp. Hình ngoài phạm vi "
-        "vẫn có thể bị gán thành tròn hoặc chữ nhật."
-    )
+    st.dataframe(rows, use_container_width=True)
 
     with st.expander("Xem ảnh cắt và đặc trưng"):
         choice = st.selectbox(
@@ -250,6 +283,19 @@ def report_page():
     if not folder.exists():
         st.info("Chưa có báo cáo. Hãy huấn luyện mô hình trước.")
         return
+
+    metrics_path = folder / "metrics.json"
+    if metrics_path.exists():
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        c1, c2 = st.columns(2)
+        c1.metric(
+            "Độ chính xác tập Test (Test Accuracy)",
+            f"{metrics['test_accuracy']:.2%}",
+        )
+        c2.metric(
+            "Hàm mất mát tập Test (Test Loss)",
+            f"{metrics['test_loss']:.4f}",
+        )
 
     for filename in ["training.png", "confusion_matrix.png"]:
         path = folder / filename
